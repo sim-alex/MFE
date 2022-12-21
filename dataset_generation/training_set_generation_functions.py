@@ -24,7 +24,7 @@ from vip_hci.config.utils_conf import pool_map, iterable
 
 def inject(flevel, theta, adi, psf, pangles, pxscale, rad_dists):
     array_out, inject_pos_yx = cube_inject_companions(adi, psf, pangles, flevel=flevel, plsc=pxscale, rad_dists=rad_dists, theta=theta, imlib='opencv', interpolation='bicubic', full_output=True)  # array_out, inject_pos_yx
-    res=[array_out, inject_pos_yx]
+    res=[array_out, (inject_pos_yx[0][1], inject_pos_yx[0][0])]  #returning pos_xy
     return res
 
 
@@ -48,24 +48,33 @@ def inject_random_fake_comp(adi, psf, pxscale, pangles, fwhm, rad_dists, inj_nbr
     norm_psf = normalize_psf(psf, fwhm=fwhm, model='gauss', imlib='opencv', interpolation='bicubic')       #Normalizing PSF
     fluxes=[]
     if not flx == 'random':
-        flevel= [np.random.randint(flx[0], high=flx[1]) for i in range(inj_nbr)]
+        from_stat=[0,(395.3,544.7),(165.6,344.4),(142.1,267.8),(33.1,75.4),(31.4,65.7),(7.8,19.4),(8.28,14.7),(2.8,9.6),(1.5,5.96),(2.7,6.2),(2.6,4.7),(2.7,4.9),(2.1,5),(3.3,5.12),(3.4,6.7),(2,6),(3.5,6.9),(4.5,9.5),(2.9,8.6)]
+        try:
+            flevel= [np.random.randint(flx[0], high=flx[1]) for i in range(inj_nbr)]
+        except:
+            a,b = from_stat[int(rad_dists/fwhm)][0], from_stat[int(rad_dists/fwhm)][1]
+            flevel= [np.random.randint(a, high=b) for i in range(inj_nbr)]
     else:
         flux_range=[0,(100,850),(70,600),(50,400),(10,250),(5,100), (0,90), (0,80), (0,50), (0,30)]+30*[(0,20)]
-        flevel= [np.random.randint(flux_range[int(rad_dists/fwhm)][0], high=flux_range[int(rad_dists/fwhm)][1]) for i in range(inj_nbr)]         # 8L_D:[2.8, 9.6] 7L_D:[8.28, 14.7] 6L_D:[7.8, 19.4]  5L_D:[31.4, 65.7] 4L_D:[33.1, 75.4], 3L_D:[142.1, 267.8], 2L_D [165.6, 344.4], 1L_D [395.3, 544.7]
+        flevel= [np.random.randint(flux_range[int(rad_dists/fwhm)][0], high=flux_range[int(rad_dists/fwhm)][1]) for i in range(inj_nbr)]     
     theta = [np.random.rand()*360 for i in range(inj_nbr)] #in degrees
     
 
     res=pool_map(nproc, inject, iterable(flevel), iterable(theta), adi, psf, pangles, pxscale, rad_dists)
-    
-    '''    
-    adi_with_fake_comp, inj_posyx = cube_inject_companions(adi, psf, pangles, flevel=flevel, plsc=pxscale, rad_dists=rad_dists, theta=theta, imlib='opencv', interpolation='bicubic', full_output=True)
-    inj_posyx=inj_posyx[0]
-    inj_posxy=(inj_posyx[1], inj_posyx[0])
-    '''    
-    
-    return res, flevel   #pos_yx here, not pos_xy !!!        res: [inj_adi, (pos_yx), ....]
+    res=np.array(res, dtype=object)
+    return res[:,0], np.array(res[:,1]), flevel # res(:,0): adi cubes with fake companion res(:,1): injection position of fake companion flevel: flux level of injected FC'''
 
-def make_mlar_plus(adi_with_fake_comp, ncomp, pangles, fwhm, inj_posxy, an_radius, plot=False):
+def adi_mlar_pca(adi_with_fake_comp, pangles, ncomp, fwhm, an_radius):
+    pca=[]
+    rot_options={'imlib':'skimage', 'interpolation':'bicubic'}
+    for i in range(1, ncomp+1):
+        pca.append(pca_annulus(adi_with_fake_comp, pangles, i, 3*fwhm, an_radius, cube_ref=None, svd_mode='lapack', scaling=None, collapse='median', weights=None, collapse_ifs='mean', **rot_options))
+    return pca
+
+def crop(pos, residual_cube, patch_width):
+    return cube_crop_frames(residual_cube, patch_width, xy=pos, force=True, verbose=False)
+
+def make_mlar_plus(adi_with_fake_comp, ncomp, pangles, fwhm, inj_posxy, an_radius, nproc=1):
     
     """
     From injected ADI sequence, crop MLAR patch around fake companion injection position.
@@ -76,22 +85,16 @@ def make_mlar_plus(adi_with_fake_comp, ncomp, pangles, fwhm, inj_posxy, an_radiu
     pangles: paralactic angles related to adi sequence
     inj_posxy: (x,y) injection position of fake companion
     an_radius: radius of the annulus fake companion has been injected in
-    plot: False/True: plot resulting MLAR patch
     
     output:
     generated MLAR patch (as a list)
     """
-    MLAR=[]
     patch_width = np.ceil(2*fwhm) // 2 * 2 + 1    # rounding to the nearest odd integer
     patch_width = int(patch_width)
-    rot_options={'imlib':'skimage', 'interpolation':'bicubic'}
-
-    for i in range(1, ncomp+1):
-        adi_pca = pca_annulus(adi_with_fake_comp, pangles, ncomp, 3*fwhm, an_radius, cube_ref=None, svd_mode='lapack', scaling=None, collapse='median', weights=None, collapse_ifs='mean', **rot_options)
-        MLAR.append(frame_crop(adi_pca, patch_width, cenxy=inj_posxy, verbose=False, force=True))
     
-    if plot:
-        plot_frames(tuple(MLAR[i] for i in range(ncomp)))
+
+    mlar_adi_pca= pool_map(nproc, adi_mlar_pca, iterable(adi_with_fake_comp),pangles, ncomp, fwhm, an_radius, nproc)
+    MLAR= pool_map(nproc, crop, iterable(inj_posxy), iterable(mlar_adi_pca), patch_width)
         
     return MLAR
     
@@ -102,7 +105,7 @@ def get_fwhm(psf):
     
     output: fwhm
     """
-    DF_fit = fit_2dgaussian(psf, crop=True, cropsize=9, debug=True, full_output=True)
+    DF_fit = fit_2dgaussian(psf, crop=True, cropsize=9, debug=False, full_output=True)
     fwhm = np.mean([DF_fit['fwhm_x'],DF_fit['fwhm_y']])   #using gaussian fit to get FWHM
     
     return fwhm
@@ -150,10 +153,6 @@ def make_residual_cube(adi, pangles, ncomp, fwhm, an_radius):
         residual_cube.append(adi_pca)
     residual_cube = np.array(residual_cube)
     return residual_cube
-
-def crop(pos, residual_cube, patch_width):
-    return cube_crop_frames(residual_cube, patch_width, xy=pos, force=True, verbose=False)
-
 
 
 def make_mlar_minus(residual_cube, fwhm, an_radius, sample_nbr, nproc=1):
