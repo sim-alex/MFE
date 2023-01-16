@@ -15,7 +15,7 @@ from vip_hci.metrics import significance, snr, snrmap
 from vip_hci.var import fit_2dgaussian, frame_center
 
 from vip_hci.preproc.cosmetics import cube_crop_frames, frame_crop
-from vip_hci.preproc import frame_rotate
+from vip_hci.preproc import frame_rotate, cube_shift, cube_derotate
 from vip_hci.preproc.recentering import frame_shift
 
 from vip_hci.config.utils_conf import pool_map, iterable
@@ -216,7 +216,9 @@ def flux_interval(snr_interv, snr_values):
 
 
 def rotation(patch, angle):
-    rot = [frame_rotate(i, angle, imlib='vip-fft', interpolation='lanczos4', cxy=None, border_mode='constant', edge_blend=None, interp_zeros=False, ker=1) for i in patch]
+#    rot = [frame_rotate(i, angle, imlib='vip-fft', interpolation='lanczos4', cxy=None, border_mode='constant', edge_blend=None, interp_zeros=False, ker=1) for i in patch]
+    each_frame_angle = angle*np.ones(len(patch))
+    rot = cube_derotate(patch, each_frame_angle, border_mode='reflect', imlib='opencv')
     return rot
 
 
@@ -235,7 +237,9 @@ def patch_rotation(mlar, nproc=1):
     
     
 def shift(patch, xy_shift):
-    res = [frame_shift(i, xy_shift[1], xy_shift[0], imlib='opencv', interpolation='bicubic', border_mode='reflect') for i in patch]
+#    res = [frame_shift(i, xy_shift[1], xy_shift[0], imlib='opencv', interpolation='bicubic', border_mode='reflect') for i in patch]
+    res = cube_shift(cube=patch, shift_x=xy_shift[0], shift_y=xy_shift[1],
+                                       imlib='opencv', border_mode='reflect')
     return res
     
 def patch_shift(mlar, nproc):

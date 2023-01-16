@@ -24,7 +24,21 @@ import training_set_generation_functions
 reload(training_set_generation_functions)
 from training_set_generation_functions import inject_random_fake_comp, adi_mlar_pca, crop, make_mlar_minus, get_fwhm, evaluate_snr, plot_patch, flux_interval, patch_rotation, patch_shift, patch_average, save_to_h5, read_h5, make_residual_cube, plot_10_random
 
-def flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, runtime=False, plot=False, saved_stat=True):
+st1, st2, et1, et2= 0,0,0,0
+def clock(evaluate_run_time, s_t):
+    global st1, st2, et1, et2
+    if evaluate_run_time and s_t=='start':
+        st1=time.time()
+        st2=time.process_time()
+    if evaluate_run_time and s_t=='stop':
+        et1=time.time()
+        et2=time.process_time()
+        print('Execution time:', et1-st1, 'seconds')
+        print('CPU Execution time:', et2-st2, 'seconds \n')
+    return
+        
+
+def flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, evaluate_run_time=False, plot=False, saved_stat=True):
     
     if saved_stat:
         #use flux intervals previously computed over 500 samples
@@ -34,32 +48,20 @@ def flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, ru
     fwhm = get_fwhm(psf)
 
 #injecting fake companions
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time,'start')
         
     adi_with_fake_comp, inj_pos, flevel = inject_random_fake_comp(adi, psf, pxscale, pangles, fwhm, an_radius, inj_nbr=sample_size, flx='random', nproc=n_proc)
     
-    if runtime:
-        print('injecting done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')
+    print('injecting done')
+    clock(evaluate_run_time, 'stop')
     
 #evaluating signal to noise ratio for each injection
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time,'start')
         
     snr_res = evaluate_snr(adi_with_fake_comp, pa, fwhm, inj_pos, an_radius, nproc=6)  #[[posy, posx,flux, array(flux_appertures), s/r],....]
-
-    if runtime:
-        print('snr done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')
+    
+    print('snr done')
+    clock(evaluate_run_time, 'stop')
     
 #keeping values only for 1 < snr < 3
     good_values=[]
@@ -78,7 +80,7 @@ def flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, ru
     
     return flux_interv
 
-def C_plus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, runtime=False):
+def C_plus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, evaluate_run_time=False):
     
     fwhm = get_fwhm(psf)
     an_radius = annulus*fwhm
@@ -86,97 +88,59 @@ def C_plus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncom
     patch_width = int(patch_width)
     
     sample_size=500 #for statisticss
-    flux_interv= flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, runtime=False, plot=False, saved_stat=True)
+    flux_interv= flux_statistics(adi, pangles, psf, pxscale, annulus, sample_size, n_proc, evaluate_run_time=False, plot=False, saved_stat=True)
     
 # injecting fake companions
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time, 'start')
 
     adi_with_fake_comp, inj_pos, flevel = inject_random_fake_comp(adi, psf, pxscale, pangles, fwhm, an_radius, inj_nbr=patch_numbre, flx=flux_interv, nproc=n_proc) #still need to include flux statisctics part
-    
-    if runtime:
-        print('injecting done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')
+    print('injecting done')
+    clock(evaluate_run_time, 'stop')
 
 # making residual cubes
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time, 'start')
 
     adi_pca_cubes= pool_map(n_proc, adi_mlar_pca, iterable(adi_with_fake_comp), pangles, ncomp, fwhm, an_radius)
     adi_pca_cubes=np.array(adi_pca_cubes)
     
-    if runtime:
-        print('PCA done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')
+    print('PCA done')
+    clock(evaluate_run_time, 'stop')
 
 # cropping patches 
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time, 'start')
         
     MLAR= pool_map(n_proc, crop, iterable(inj_pos), iterable(adi_pca_cubes), patch_width)
-    print(type(MLAR))
-    if runtime:
-        print('cropping done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')
+    
+    print('cropping done')
+    clock(evaluate_run_time, 'stop')
 
 # data augementation
     patches_plus_aug=[]
     if data_aug:
         print('data_augmentation \n')
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_plus_aug+=patch_rotation(MLAR, nproc=n_proc)
+        print('rotation done')
+        clock(evaluate_run_time, 'stop')
         
-        if runtime:
-            print('rotation done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
-        
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_plus_aug+=patch_shift(MLAR, nproc=n_proc)
         
-        if runtime:
-            print('shift done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
+        print('shift done')
+        clock(evaluate_run_time, 'stop')
         
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_plus_aug+=patch_average(MLAR, nproc=n_proc)
         
-        if runtime:
-            print('average done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
+        print('average done')
+        clock(evaluate_run_time, 'stop')
         
     return MLAR, patches_plus_aug
 
-def C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, runtime=False):
+def C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, evaluate_run_time=False):
 
     fwhm = get_fwhm(psf)
     an_radius = annulus*fwhm
@@ -184,24 +148,15 @@ def C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, nco
     patch_width = int(patch_width)   
     
 # making residual cube (only 1 needed)    
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time, 'start')
 
     adi_pca_cubes= pool_map(n_proc, adi_mlar_pca, iterable([adi]), pangles, ncomp, fwhm, an_radius)
     adi_pca_cubes=np.array(adi_pca_cubes)
-    
-    if runtime:
-        print('PCA done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')    
+    print('PCA done')
+    clock(evaluate_run_time, 'stop')   
     
 # cropping random patches
-    if runtime:
-        st1=time.time()
-        st2=time.process_time()
+    clock(evaluate_run_time, 'start')
     pos=[]
     for i in range(patch_numbre):
         theta = np.random.rand()*2*np.pi
@@ -210,58 +165,36 @@ def C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, nco
         pos.append((x,y))
 
     sample_set=pool_map(n_proc, crop, iterable(pos), adi_pca_cubes[0], patch_width)
-
-    if runtime:
-        print('cropping done')
-        et1=time.time()
-        et2=time.process_time()
-        print('Execution time:', et1-st1, 'seconds')
-        print('CPU Execution time:', et2-st2, 'seconds \n')  
+    
+    print('cropping done')
+    clock(evaluate_run_time, 'stop')
     
 # data augementation
     patches_min_aug=[]
     if data_aug:
         print('data_augmentation \n')
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_min_aug+=patch_rotation(sample_set, nproc=n_proc)
         
-        if runtime:
-            print('rotation done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
+        print('rotation done')
+        clock(evaluate_run_time, 'stop')
         
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_min_aug+=patch_shift(sample_set, nproc=n_proc)
         
-        if runtime:
-            print('shift done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
+        print('shift done')
+        clock(evaluate_run_time, 'stop')
         
-        if runtime:
-            st1=time.time()
-            st2=time.process_time()
+        clock(evaluate_run_time, 'start')
             
         patches_min_aug+=patch_average(sample_set, nproc=n_proc)
         
-        if runtime:
-            print('average done')
-            et1=time.time()
-            et2=time.process_time()
-            print('Execution time:', et1-st1, 'seconds')
-            print('CPU Execution time:', et2-st2, 'seconds \n')
+        print('average done')
+        clock(evaluate_run_time, 'stop')
     
-    return sample_set + patches_min_aug
+    return sample_set, patches_min_aug
 
 def ask_input():
     int_nbr=list(range(1,15))
@@ -298,15 +231,15 @@ def ask_input():
         n_proc=input('multiprocessing? (integre>0)')
     n_proc=int(n_proc)
 
-    runtime=input('display runtime ? (y/n)')
-    while not runtime in yes_or_no:
-        runtime=input('display runtime ? (y/n)')
-    if runtime=='y':
-        runtime=True
+    evaluate_run_time=input('display runtime ? (y/n)')
+    while not evaluate_run_time in yes_or_no:
+        evaluate_run_time=input('display runtime ? (y/n)')
+    if evaluate_run_time=='y':
+        evaluate_run_time=True
     else:
-        runtime=False
+        evaluate_run_time=False
     
-    return annulus, patch_numbre, ncomp, data_aug, n_proc, runtime
+    return annulus, patch_numbre, ncomp, data_aug, n_proc, evaluate_run_time
 
 def main():
 
@@ -317,11 +250,11 @@ def main():
     pxscale=np.load('adi_sequence/pxscale.npy')    
     
 #asking user for input
-    annulus, patch_numbre, ncomp, data_aug, n_proc, runtime = ask_input()
+    annulus, patch_numbre, ncomp, data_aug, n_proc, evaluate_run_time = ask_input()
 
 #generating patches   
-    patches_plus, patches_plus_aug = C_plus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, runtime=False)
-    patches_minus, patches_minus_aug = C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug=False, runtime=False)
+    patches_plus, patches_plus_aug = C_plus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug, evaluate_run_time)
+    patches_minus, patches_minus_aug = C_minus_class(adi, pangles, psf, pxscale, annulus, patch_numbre, n_proc, ncomp, data_aug, evaluate_run_time)
 #saving
     save_to_h5(annulus, {'patches_plus':patches_plus, 'patches_plus_aug':patches_plus_aug, 'patches_minus':patches_minus, 'patches_minus_aug':patches_minus_aug})
     plot_10_random(patches_plus)
